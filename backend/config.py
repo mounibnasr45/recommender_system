@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     MODEL_PATH: str = str(MODELS_DIR / "hybrid_recommender.pkl")
     PROCESSED_DATA_PATH: str = str(MODELS_DIR / "processed_data.pkl")
     
+    # User data paths
+    USERS_FILE: str = str(MODELS_DIR / "users.json")
+    USER_RATINGS_FILE: str = str(MODELS_DIR / "user_ratings.json")
+    
     # API settings
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000

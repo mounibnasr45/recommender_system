@@ -8,8 +8,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import uvicorn
 
-from ..config import settings
-from ..services.recommender import RecommenderService
+from config import settings
+from services.recommender import RecommenderService
+from services.user_service import UserService
 
 
 # Pydantic models for API
@@ -40,6 +41,37 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_info: Optional[Dict] = None
 
+class UserRegistrationRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class UserLoginRequest(BaseModel):
+    username: str
+    password: str
+
+class RatingRequest(BaseModel):
+    movie_id: int
+    rating: float
+
+class UserResponse(BaseModel):
+    user_id: int
+    username: str
+    email: str
+    created_at: str
+    last_login: Optional[str] = None
+
+class RatingResponse(BaseModel):
+    user_id: int
+    movie_id: int
+    rating: float
+    timestamp: str
+
+class UserStatsResponse(BaseModel):
+    total_users: int
+    total_ratings: int
+    avg_ratings_per_user: float
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -57,8 +89,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize service
+# Initialize services
 recommender_service = RecommenderService()
+user_service = UserService(settings.USERS_FILE, settings.USER_RATINGS_FILE)
+
+# Connect services
+recommender_service.set_user_service(user_service)
 
 # Create API router
 api_router = APIRouter()
@@ -172,6 +208,85 @@ def get_dataset_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+@api_router.post("/users/register", response_model=UserResponse)
+def register_user(request: UserRegistrationRequest):
+    """Register a new user"""
+    success, message, user_id = user_service.create_user(
+        request.username, request.email, request.password
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    user_data = user_service.get_user(user_id)
+    return UserResponse(**user_data)
+
+@api_router.post("/users/login")
+def login_user(request: UserLoginRequest):
+    """Login user"""
+    success, message, user_data = user_service.authenticate_user(
+        request.username, request.password
+    )
+
+    if not success:
+        raise HTTPException(status_code=401, detail=message)
+
+    return {
+        "message": message,
+        "user": UserResponse(**user_data)
+    }
+
+@api_router.get("/users/{user_id}", response_model=UserResponse)
+def get_user(user_id: int):
+    """Get user information"""
+    user_data = user_service.get_user(user_id)
+    if not user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserResponse(**user_data)
+
+@api_router.post("/users/{user_id}/ratings", response_model=RatingResponse)
+def add_user_rating(user_id: int, request: RatingRequest):
+    """Add or update a rating for a user"""
+    # Validate rating range
+    if not (0.5 <= request.rating <= 5.0):
+        raise HTTPException(status_code=400, detail="Rating must be between 0.5 and 5.0")
+
+    # Check if user exists
+    if not user_service.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rating_data = user_service.add_rating(user_id, request.movie_id, request.rating)
+    return RatingResponse(**rating_data)
+
+@api_router.get("/users/{user_id}/ratings")
+def get_user_ratings(user_id: int):
+    """Get all ratings for a user"""
+    # Check if user exists
+    if not user_service.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    ratings = user_service.get_user_ratings(user_id)
+    return {"user_id": user_id, "ratings": ratings, "count": len(ratings)}
+
+@api_router.get("/users/{user_id}/ratings/{movie_id}")
+def get_user_rating_for_movie(user_id: int, movie_id: int):
+    """Get user's rating for a specific movie"""
+    # Check if user exists
+    if not user_service.get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rating = user_service.get_user_rating_for_movie(user_id, movie_id)
+    if rating is None:
+        raise HTTPException(status_code=404, detail="Rating not found")
+
+    return {"user_id": user_id, "movie_id": movie_id, "rating": rating}
+
+@api_router.get("/users/stats", response_model=UserStatsResponse)
+def get_user_stats():
+    """Get user statistics"""
+    return UserStatsResponse(**user_service.get_stats())
 
 # Include the API router with /api prefix
 app.include_router(api_router, prefix="/api")

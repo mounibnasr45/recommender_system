@@ -27,7 +27,13 @@
 - **20% Content-Based**: Genre similarity using Jaccard index
 - **Smart Fallback**: Content-based handles cold-start problems
 
-### 📈 **Proven Performance**
+### � **User Management System**
+- **New User Registration**: Create accounts with username and email
+- **Secure Authentication**: Password hashing with salt
+- **Personalized Ratings**: Rate movies and build your recommendation profile
+- **Dynamic Recommendations**: System learns from your ratings over time
+
+### �📈 **Proven Performance**
 - **Test RMSE: 0.8598** (< 1 star error on 0.5-5.0 scale)
 - **Excellent Generalization**: Val-Test difference of only 0.0013
 - **Fast Training**: ~2-5 minutes on 90K ratings
@@ -576,7 +582,57 @@ Access model internals for research
 
 ## 💻 Usage Examples
 
-### **Scenario 1: Get Movie Recommendations**
+### **Scenario 1: User Registration and Authentication**
+
+**Goal:** Create a new user account and start building personalized recommendations
+
+**Process:**
+1. Register with username, email, and password
+2. Login to access personalized features
+3. Start rating movies to train your recommendation profile
+
+**API Usage:**
+```
+POST /api/users/register
+{
+  "username": "movie_lover",
+  "email": "user@example.com",
+  "password": "secure_password"
+}
+
+POST /api/users/login
+{
+  "username": "movie_lover",
+  "password": "secure_password"
+}
+```
+
+---
+
+### **Scenario 2: Rate Movies and Get Personalized Recommendations**
+
+**Goal:** Rate movies and receive recommendations based on your preferences
+
+**Process:**
+1. Login with your account
+2. Rate movies you have watched (0.5-5.0 stars)
+3. Get recommendations that improve over time
+4. System incorporates your ratings into the model
+
+**API Usage:**
+```
+POST /api/users/{user_id}/ratings
+{
+  "movie_id": 1,
+  "rating": 5.0
+}
+
+GET /api/recommend/{user_id}
+```
+
+---
+
+### **Scenario 3: Get Movie Recommendations**
 
 **Goal:** Get 10 personalized movie recommendations for User #42
 
@@ -722,6 +778,87 @@ Status: 200 OK
     "n_items": 3650,
     "n_factors": 15
   }
+}
+```
+
+---
+
+#### **User Registration Endpoint**
+
+**Request:** POST /api/users/register
+
+**Body:**
+```
+{
+  "username": "movie_lover",
+  "email": "user@example.com",
+  "password": "secure_password"
+}
+```
+
+**Response:**
+```
+Status: 201 Created
+{
+  "user_id": 1000,
+  "username": "movie_lover",
+  "email": "user@example.com",
+  "created_at": "2025-10-27T10:30:00",
+  "last_login": null
+}
+```
+
+---
+
+#### **User Login Endpoint**
+
+**Request:** POST /api/users/login
+
+**Body:**
+```
+{
+  "username": "movie_lover",
+  "password": "secure_password"
+}
+```
+
+**Response:**
+```
+Status: 200 OK
+{
+  "message": "Login successful",
+  "user": {
+    "user_id": 1000,
+    "username": "movie_lover",
+    "email": "user@example.com",
+    "created_at": "2025-10-27T10:30:00",
+    "last_login": "2025-10-27T10:35:00"
+  }
+}
+```
+
+---
+
+#### **Add User Rating Endpoint**
+
+**Request:** POST /api/users/{user_id}/ratings
+
+**Body:**
+```
+{
+  "movie_id": 1,
+  "rating": 5.0
+}
+```
+
+**Response:**
+```
+Status: 201 Created
+{
+  "user_id": 1000,
+  "movie_id": 1,
+  "rating": 5.0,
+  "timestamp": "2025-10-27T10:40:00"
 }
 ```
 

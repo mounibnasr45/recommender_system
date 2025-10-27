@@ -7,8 +7,8 @@ import os
 import pickle
 from typing import List, Dict, Optional
 import pandas as pd
-from ..models.hybrid_mf import HybridMatrixFactorization, MovieRecommender
-from ..config import settings
+from models.hybrid_mf import HybridMatrixFactorization, MovieRecommender
+from config import settings
 
 
 class RecommenderService:
@@ -18,6 +18,7 @@ class RecommenderService:
         self.model: Optional[HybridMatrixFactorization] = None
         self.recommender: Optional[MovieRecommender] = None
         self.data: Optional[pd.DataFrame] = None
+        self.user_service = None  # Will be set later
         self._load_model()
 
     def _load_model(self):
@@ -41,6 +42,11 @@ class RecommenderService:
                 if os.path.exists(data_path):
                     with open(data_path, 'rb') as f:
                         self.data = pickle.load(f)
+
+                    # Merge with user ratings if user service is available
+                    if self.user_service is not None:
+                        self.data = self._merge_user_ratings(self.data)
+
                     self.recommender = MovieRecommender(self.model, self.data)
                     print("✓ Data and recommender initialized")
                 else:
@@ -80,8 +86,16 @@ class RecommenderService:
 
         try:
             # Import here to avoid circular imports
-            from ..data.dataset_setup import DatasetSetup
-            from ..data.data_loader import MovieLensLoader
+            import sys
+            from pathlib import Path
+
+            # Add project root to path if not already there
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+
+            from data.dataset_setup import DatasetSetup
+            from data.data_loader import MovieLensLoader
 
             # Download and load data
             setup = DatasetSetup()
@@ -116,10 +130,11 @@ class RecommenderService:
             os.makedirs(os.path.dirname(settings.MODEL_PATH), exist_ok=True)
             model.save_model(settings.MODEL_PATH)
 
-            # Create recommender
+            # Create recommender with merged data
+            combined_data = self._merge_user_ratings(data)
             self.model = model
-            self.data = data
-            self.recommender = MovieRecommender(model, data)
+            self.data = combined_data
+            self.recommender = MovieRecommender(model, combined_data)
 
             return {
                 "status": "success",
@@ -144,14 +159,38 @@ class RecommenderService:
         Returns:
             List of recommendation dictionaries
         """
-        if self.recommender is None:
+        if self.model is None:
+            print(f"❌ Model not loaded for user {user_id}")
             # Fallback: return popular movies when model is not available
             return self._get_popular_movies(n)
 
         try:
+            # Always merge latest user ratings before generating recommendations
+            if self.user_service is not None:
+                current_data = self._merge_user_ratings(self.data.copy() if self.data is not None else None)
+                if current_data is not None:
+                    data_changed = self.data is None or not current_data.equals(self.data)
+                    if data_changed:
+                        print(f"✓ Data updated for user {user_id}, creating new recommender")
+                        # Data has changed, create new recommender with updated data
+                        self.data = current_data
+                        self.recommender = MovieRecommender(self.model, self.data)
+                        print(f"✓ New recommender created with {len(self.data)} total ratings")
+                    else:
+                        print(f"✓ Data unchanged for user {user_id}")
+                else:
+                    print(f"❌ Failed to merge data for user {user_id}")
+
+            if self.recommender is None:
+                print(f"❌ Recommender is None for user {user_id}")
+                return self._get_popular_movies(n)
+
+            print(f"✓ Getting recommendations for user {user_id}")
             return self.recommender.recommend(user_id, n)
         except Exception as e:
-            print(f"❌ Error getting recommendations: {e}")
+            print(f"❌ Error getting recommendations for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
             # Fallback to popular movies
             return self._get_popular_movies(n)
 
@@ -194,8 +233,16 @@ class RecommenderService:
         """Get popular movies as fallback when model is not available"""
         try:
             # Import here to avoid circular imports
-            from ..data.dataset_setup import DatasetSetup
-            from ..data.data_loader import MovieLensLoader
+            import sys
+            from pathlib import Path
+
+            # Add project root to path if not already there
+            project_root = Path(__file__).parent.parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+
+            from data.dataset_setup import DatasetSetup
+            from data.data_loader import MovieLensLoader
 
             # Load basic data if not already loaded
             if self.data is None:
@@ -250,3 +297,109 @@ class RecommenderService:
             {'movie_id': 121, 'movie_title': 'Independence Day (ID4) (1996)', 'genres': 'Action|Sci-Fi|War', 'predicted_rating': 3.74, 'reason': 'Popular movie (fallback)'}
         ]
         return default_movies[:n]
+
+    def set_user_service(self, user_service):
+        """Set the user service for accessing user ratings"""
+        self.user_service = user_service
+
+    def _merge_user_ratings(self, base_data: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+        """
+        Merge user ratings with base dataset
+
+        Args:
+            base_data: Original MovieLens data (if None, loads from disk)
+
+        Returns:
+            DataFrame with user ratings merged
+        """
+        if self.user_service is None:
+            return base_data
+
+        # Load base data if not provided
+        if base_data is None:
+            try:
+                import sys
+                from pathlib import Path
+
+                # Add project root to path if not already there
+                project_root = Path(__file__).parent.parent.parent
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+
+                from data.dataset_setup import DatasetSetup
+                from data.data_loader import MovieLensLoader
+
+                setup = DatasetSetup()
+                if not setup.download_and_extract():
+                    return None
+
+                loader = MovieLensLoader(setup.data_dir)
+                base_data = loader.load_and_enrich(
+                    min_user_ratings=settings.MIN_USER_RATINGS,
+                    min_movie_ratings=settings.MIN_MOVIE_RATINGS
+                )
+            except Exception as e:
+                print(f"❌ Error loading base data: {e}")
+                return None
+
+        # Get user ratings as DataFrame
+        user_ratings_df = self.user_service.get_all_ratings_df()
+
+        if user_ratings_df.empty:
+            return base_data
+
+        # Prepare user ratings to match base data format
+        # We need to add movie metadata to user ratings
+        movies_df = base_data[['movieId', 'title', 'genres', 'primary_genre']].drop_duplicates()
+
+        # Merge user ratings with movie data
+        user_ratings_enriched = user_ratings_df.merge(
+            movies_df,
+            left_on='movie_id',
+            right_on='movieId',
+            how='left'
+        )
+
+        # Filter out ratings for movies not in the base dataset
+        user_ratings_enriched = user_ratings_enriched.dropna(subset=['title'])
+
+        if user_ratings_enriched.empty:
+            return base_data
+
+        # Add required columns to match base data format
+        user_ratings_enriched['userId'] = user_ratings_enriched['user_id']
+        user_ratings_enriched['movie_title'] = user_ratings_enriched['title']
+        user_ratings_enriched['rating'] = user_ratings_enriched['rating'].astype(float)
+
+        # Create indices for new users (starting from max existing + 1)
+        max_user_idx = base_data['user_idx'].max()
+        user_ratings_enriched['user_idx'] = pd.Categorical(user_ratings_enriched['user_id']).codes + max_user_idx + 1
+
+        # Create indices for items (reuse existing item indices where possible)
+        item_mapping = base_data[['movieId', 'item_idx']].drop_duplicates().set_index('movieId')['item_idx'].to_dict()
+        user_ratings_enriched['item_idx'] = user_ratings_enriched['movieId'].map(item_mapping)
+
+        # Filter out movies not in the base dataset
+        user_ratings_enriched = user_ratings_enriched.dropna(subset=['item_idx'])
+        user_ratings_enriched['item_idx'] = user_ratings_enriched['item_idx'].astype(int)
+
+        # Select only the columns we need
+        columns_to_keep = ['userId', 'movieId', 'rating', 'timestamp', 'movie_title', 'genres',
+                          'primary_genre', 'user_idx', 'item_idx']
+
+        # Add missing columns if they don't exist
+        for col in ['genres_list', 'num_genres']:
+            if col in base_data.columns:
+                if col == 'genres_list':
+                    user_ratings_enriched[col] = user_ratings_enriched['genres'].str.split('|')
+                elif col == 'num_genres':
+                    user_ratings_enriched[col] = user_ratings_enriched['genres_list'].str.len()
+
+        user_ratings_final = user_ratings_enriched[columns_to_keep]
+
+        # Combine with base data
+        combined_data = pd.concat([base_data, user_ratings_final], ignore_index=True)
+
+        print(f"✓ Merged {len(user_ratings_final)} user ratings with base dataset")
+
+        return combined_data

@@ -404,24 +404,52 @@ class HybridMatrixFactorization:
             if hasattr(sys.modules['__main__'], 'HybridMatrixFactorization'):
                 delattr(sys.modules['__main__'], 'HybridMatrixFactorization')
 
-    def get_top_recommendations(self, user_idx: int, n: int,
-                               user_items: np.ndarray, user_ratings: np.ndarray,
-                               rated_items: Set[int]) -> List[Tuple[int, float]]:
+    def _extend_model_for_new_users(self, max_user_idx: int):
         """
-        Get top N movie recommendations for a user
+        Extend model parameters to accommodate new users
 
         Args:
-            user_idx: User index
-            n: Number of recommendations
-            user_items: Items user has rated
-            user_ratings: Ratings user has given
-            rated_items: Set of already rated items (to exclude)
+            max_user_idx: Maximum user index that needs to be supported
+        """
+        current_n_users = len(self.user_bias) if self.user_bias is not None else 0
+
+        if max_user_idx >= current_n_users:
+            # Need to extend the model
+            n_new_users = max_user_idx - current_n_users + 1
+
+            # Extend user factors (P)
+            if self.P is not None:
+                new_P = np.random.normal(0, 0.1, (n_new_users, self.n_factors)).astype(np.float32)
+                self.P = np.vstack([self.P, new_P])
+
+            # Extend user bias
+            if self.user_bias is not None:
+                new_bias = np.zeros(n_new_users, dtype=np.float32)
+                self.user_bias = np.concatenate([self.user_bias, new_bias])
+
+            print(f"✓ Extended model for {n_new_users} new users (total: {len(self.user_bias)})")
+
+    def get_top_recommendations(self, user_idx: int, n: int,
+                                user_items: np.ndarray, user_ratings: np.ndarray,
+                                rated_items: Set[int]) -> List[Tuple[int, float]]:
+        """
+        Get top N movie recommendations for a user (CF + content hybrid)
+
+        Args:
+            user_idx: internal user index
+            n: number of recommendations
+            user_items: array of item_idx the user has rated
+            user_ratings: corresponding ratings
+            rated_items: set of item_idx already rated by the user
 
         Returns:
             List of (item_idx, predicted_rating) tuples
         """
+        if self.Q is None:
+            return []
+
         n_items = self.Q.shape[0]
-        predictions = []
+        predictions: List[Tuple[int, float]] = []
 
         for item_idx in range(n_items):
             if item_idx in rated_items:
@@ -465,6 +493,23 @@ class MovieRecommender:
                 user_data['rating'].values
             )
 
+    def _update_mappings(self):
+        """Update mappings when data changes"""
+        # Update user mapping
+        self.user_id_to_idx = dict(zip(self.data['userId'], self.data['user_idx']))
+
+        # Update movie mapping
+        self.idx_to_movie_id = dict(zip(self.data['item_idx'], self.data['movieId']))
+
+        # Update movie information
+        self.movie_info = self.data.groupby('item_idx').agg({
+            'movieId': 'first',
+            'title': 'first',
+            'genres': 'first',
+            'primary_genre': 'first',
+            'rating': 'mean'
+        }).to_dict('index')
+
     def recommend(self, user_id: int, n: int = 10) -> List[Dict]:
         """
         Get top N recommendations for a user
@@ -476,23 +521,45 @@ class MovieRecommender:
         Returns:
             List of recommendation dictionaries
         """
+        print(f"🔍 Recommending for user {user_id}")
+
+        # Update mappings if new users/movies were added
+        self._update_mappings()
+
         if user_id not in self.user_id_to_idx:
+            print(f"❌ User {user_id} not in mapping, falling back to popular")
             return self._popular_recommendations(n)
 
         user_idx = self.user_id_to_idx[user_id]
-        rated_items = set(self.data[self.data['userId'] == user_id]['item_idx'])
-        user_items, user_ratings = self.user_profiles.get(
-            user_idx,
-            (np.array([]), np.array([]))
-        )
+        print(f"✓ User {user_id} mapped to index {user_idx}")
 
+        # Extend model if necessary for new users
+        if user_idx >= len(self.model.user_bias):
+            print(f"✓ Extending model for user index {user_idx}")
+            self.model._extend_model_for_new_users(user_idx)
+
+        # Dynamically get user's ratings from current data (supports real-time updates)
+        user_data = self.data[self.data['userId'] == user_id]
+        rated_items = set(user_data['item_idx'])
+        user_items = user_data['item_idx'].values
+        user_ratings = user_data['rating'].values
+
+        print(f"✓ User {user_id} has {len(user_data)} ratings")
+
+        # Delegate to the underlying model's recommendation routine
         recommendations = self.model.get_top_recommendations(
             user_idx, n, user_items, user_ratings, rated_items
         )
 
+        print(f"✓ Generated {len(recommendations)} recommendations")
+        print(f"Sample recommendations: {recommendations[:3] if recommendations else 'None'}")
+
         results = []
         for item_idx, predicted_rating in recommendations:
-            info = self.movie_info[item_idx]
+            info = self.movie_info.get(item_idx)
+            if info is None:
+                print(f"❌ No movie info for item_idx {item_idx}")
+                continue  # Skip if movie info not available
             results.append({
                 'movieId': int(info['movieId']),
                 'title': info['title'],
@@ -501,6 +568,7 @@ class MovieRecommender:
                 'avg_rating': round(float(info['rating']), 2)
             })
 
+        print(f"✓ Returning {len(results)} formatted recommendations")
         return results
 
     def _popular_recommendations(self, n: int) -> List[Dict]:
