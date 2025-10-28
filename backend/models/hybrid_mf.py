@@ -7,6 +7,93 @@ import numpy as np
 import pandas as pd
 import pickle
 from typing import List, Dict, Tuple, Set, Optional
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+class SemanticEncoder:
+    """
+    Encodes movie descriptions using sentence transformers for semantic search
+    """
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        self.model_name = model_name
+        self.model = None
+        self.embeddings = None
+        self.movie_ids = None
+
+    def load_model(self):
+        """Load the sentence transformer model"""
+        if self.model is None:
+            print(f"Loading semantic model: {self.model_name}")
+            self.model = SentenceTransformer(self.model_name)
+            print(f"✓ Model loaded with dimension: {self.model.get_sentence_embedding_dimension()}")
+
+    def encode_descriptions(self, descriptions: List[str]) -> np.ndarray:
+        """
+        Encode movie descriptions into embeddings
+
+        Args:
+            descriptions: List of movie description strings
+
+        Returns:
+            Numpy array of embeddings
+        """
+        if self.model is None:
+            self.load_model()
+
+        print(f"Encoding {len(descriptions)} descriptions...")
+        embeddings = self.model.encode(descriptions, show_progress_bar=True)
+        # Ensure we store embeddings on the encoder so save_embeddings() writes the real array
+        self.embeddings = embeddings.astype(np.float32)
+        print(f"✓ Generated embeddings with shape: {self.embeddings.shape}")
+
+        return self.embeddings
+
+    def calculate_similarity(self, query_embedding: np.ndarray,
+                           movie_embeddings: np.ndarray) -> np.ndarray:
+        """
+        Calculate cosine similarity between query and movie embeddings
+
+        Args:
+            query_embedding: Single query embedding
+            movie_embeddings: All movie embeddings
+
+        Returns:
+            Similarity scores for each movie
+        """
+        return cosine_similarity(query_embedding.reshape(1, -1), movie_embeddings).flatten()
+
+    def save_embeddings(self, filepath: str, movie_ids: List[int]):
+        """Save embeddings and movie IDs to disk"""
+        if self.embeddings is None:
+            raise ValueError("No embeddings to save. Run encode_descriptions() first.")
+
+        data = {
+            'embeddings': self.embeddings,
+            'movie_ids': movie_ids,
+            'model_name': self.model_name
+        }
+        with open(filepath, 'wb') as f:
+            pickle.dump(data, f)
+        print(f"✓ Embeddings saved to {filepath}")
+
+    def load_embeddings(self, filepath: str):
+        """Load embeddings and movie IDs from disk"""
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+
+        self.embeddings = data['embeddings']
+        self.movie_ids = data['movie_ids']
+        self.model_name = data.get('model_name', 'all-MiniLM-L6-v2')
+
+        # Load model if not already loaded
+        if self.model is None or self.model_name != data.get('model_name'):
+            self.load_model()
+
+        print(f"✓ Embeddings loaded from {filepath}")
+        print(f"  → Shape: {self.embeddings.shape}")
+        print(f"  → Movies: {len(self.movie_ids)}")
 
 
 class HybridMatrixFactorization:
@@ -23,7 +110,7 @@ class HybridMatrixFactorization:
     def __init__(self, n_factors: int = 20, n_iterations: int = 50,
                  reg_lambda: float = 0.1, learning_rate: float = 0.01,
                  content_weight: float = 0.15, early_stopping: bool = True,
-                 patience: int = 10):
+                 patience: int = 10, semantic_weight: float = 0.0):
 
         # Hyperparameters
         self.n_factors = n_factors
@@ -31,7 +118,8 @@ class HybridMatrixFactorization:
         self.reg_lambda = reg_lambda
         self.learning_rate = learning_rate
         self.content_weight = content_weight
-        self.cf_weight = 1 - content_weight
+        self.semantic_weight = semantic_weight
+        self.cf_weight = 1 - content_weight - semantic_weight
         self.early_stopping = early_stopping
         self.patience = patience
 
@@ -45,6 +133,11 @@ class HybridMatrixFactorization:
         # Content features
         self.item_to_genre = {}
         self.item_to_genres = {}
+
+        # Semantic features
+        self.semantic_encoder = None
+        self.item_to_description = {}
+        self.description_embeddings = None
 
         # Training history
         self.train_errors = []
@@ -70,6 +163,51 @@ class HybridMatrixFactorization:
 
         print(f"✓ Unique genres: {n_genres}")
         print(f"✓ Items with genre info: {n_items_with_genre:,}")
+
+    def build_semantic_features(self, data, semantic_encoder: SemanticEncoder = None):
+        """Build semantic features using movie descriptions"""
+        print("\n--- Building Semantic Features ---")
+
+        # Map item to description
+        self.item_to_description = data.groupby('item_idx')['description'].first().to_dict()
+
+        # Use provided encoder or create new one
+        if semantic_encoder is not None:
+            self.semantic_encoder = semantic_encoder
+        else:
+            self.semantic_encoder = SemanticEncoder()
+
+        # Get all descriptions and encode them
+        descriptions = list(self.item_to_description.values())
+        self.description_embeddings = self.semantic_encoder.encode_descriptions(descriptions)
+
+        n_items_with_desc = len([d for d in descriptions if d.strip()])
+        print(f"✓ Items with descriptions: {n_items_with_desc:,}")
+        print(f"✓ Embedding dimension: {self.description_embeddings.shape[1]}")
+
+    def calculate_semantic_similarity(self, item_idx1: int, item_idx2: int) -> float:
+        """
+        Calculate semantic similarity between two items using description embeddings
+
+        Args:
+            item_idx1, item_idx2: Item indices
+
+        Returns:
+            Cosine similarity score (0-1)
+        """
+        if self.description_embeddings is None:
+            return 0.0
+
+        # Get embeddings for both items
+        try:
+            emb1 = self.description_embeddings[item_idx1]
+            emb2 = self.description_embeddings[item_idx2]
+        except IndexError:
+            return 0.0
+
+        # Calculate cosine similarity
+        similarity = cosine_similarity(emb1.reshape(1, -1), emb2.reshape(1, -1))[0][0]
+        return max(0.0, min(1.0, similarity))  # Clamp to [0, 1]
 
     def calculate_genre_similarity(self, item_idx1: int, item_idx2: int) -> float:
         """
@@ -137,13 +275,33 @@ class HybridMatrixFactorization:
 
         return self.global_mean
 
+    def predict_semantic(self, user_idx: int, item_idx: int,
+                        user_items: np.ndarray, user_ratings: np.ndarray) -> float:
+        """Semantic-based prediction using description similarity"""
+        if len(user_items) == 0 or self.description_embeddings is None:
+            return self.global_mean
+
+        # Calculate semantic similarity with all items user has rated
+        similarities = np.array([
+            self.calculate_semantic_similarity(item_idx, int(rated_item))
+            for rated_item in user_items
+        ])
+
+        # Weighted average of ratings by semantic similarity
+        if similarities.sum() > 0:
+            weights = similarities / similarities.sum()
+            prediction = np.dot(weights, user_ratings)
+            return prediction
+
+        return self.global_mean
+
     def predict_hybrid(self, user_idx: int, item_idx: int,
                       user_items: np.ndarray = None,
                       user_ratings: np.ndarray = None) -> float:
         """
-        Hybrid prediction combining CF and content-based
+        Hybrid prediction combining CF, content-based, and semantic similarity
 
-        Final prediction = cf_weight * CF + content_weight * CB
+        Final prediction = cf_weight * CF + content_weight * CB + semantic_weight * SEM
         """
         # Collaborative filtering component
         cf_prediction = self.predict_cf(user_idx, item_idx)
@@ -153,11 +311,25 @@ class HybridMatrixFactorization:
             cb_prediction = self.predict_content(
                 user_idx, item_idx, user_items, user_ratings
             )
-            # Weighted combination
-            prediction = (
-                self.cf_weight * cf_prediction +
-                self.content_weight * cb_prediction
-            )
+
+            # Semantic component (if embeddings available)
+            if self.semantic_weight > 0 and self.description_embeddings is not None:
+                sem_prediction = self.predict_semantic(
+                    user_idx, item_idx, user_items, user_ratings
+                )
+
+                # Weighted combination of all three
+                prediction = (
+                    self.cf_weight * cf_prediction +
+                    self.content_weight * cb_prediction +
+                    self.semantic_weight * sem_prediction
+                )
+            else:
+                # Weighted combination of CF and content
+                prediction = (
+                    self.cf_weight * cf_prediction +
+                    self.content_weight * cb_prediction
+                )
         else:
             prediction = cf_prediction
 
@@ -192,6 +364,10 @@ class HybridMatrixFactorization:
 
         # Build content features
         self.build_content_features(train_data)
+
+        # Build semantic features if weight > 0
+        if self.semantic_weight > 0:
+            self.build_semantic_features(train_data)
 
         # Extract training data
         users = train_data['user_idx'].values.astype(np.int32)
@@ -231,7 +407,7 @@ class HybridMatrixFactorization:
         print(f"Training samples: {len(train_data):,}")
         if val_data is not None:
             print(f"Validation samples: {len(val_data):,}")
-        print(f"Hybrid weights: CF={self.cf_weight:.0%}, Content={self.content_weight:.0%}")
+        print(f"Hybrid weights: CF={self.cf_weight:.0%}, Content={self.content_weight:.0%}, Semantic={self.semantic_weight:.0%}")
         print(f"Regularization: λ={self.reg_lambda}")
         print(f"Learning rate: α={self.learning_rate}")
         print("="*70)
@@ -329,9 +505,12 @@ class HybridMatrixFactorization:
             'global_mean': self.global_mean,
             'item_to_genre': self.item_to_genre,
             'item_to_genres': self.item_to_genres,
+            'item_to_description': self.item_to_description,
+            'description_embeddings': self.description_embeddings,
             'n_factors': self.n_factors,
             'reg_lambda': self.reg_lambda,
             'content_weight': self.content_weight,
+            'semantic_weight': self.semantic_weight,
             'cf_weight': self.cf_weight
         }
 
@@ -382,7 +561,8 @@ class HybridMatrixFactorization:
             instance = cls(
                 n_factors=model_data.get('n_factors', 20),
                 reg_lambda=model_data.get('reg_lambda', 0.1),
-                content_weight=model_data.get('content_weight', 0.15)
+                content_weight=model_data.get('content_weight', 0.15),
+                semantic_weight=model_data.get('semantic_weight', 0.0)
             )
 
             # Restore parameters
@@ -393,7 +573,10 @@ class HybridMatrixFactorization:
             instance.global_mean = model_data.get('global_mean', 0)
             instance.item_to_genre = model_data.get('item_to_genre', {})
             instance.item_to_genres = model_data.get('item_to_genres', {})
+            instance.item_to_description = model_data.get('item_to_description', {})
+            instance.description_embeddings = model_data.get('description_embeddings')
             instance.content_weight = model_data.get('content_weight', 0.15)
+            instance.semantic_weight = model_data.get('semantic_weight', 0.0)
             instance.cf_weight = model_data.get('cf_weight', 0.85)
 
             print(f"✓ Model loaded from {filepath}")

@@ -24,7 +24,14 @@ class Settings(BaseSettings):
     REG_LAMBDA: float = 0.25
     LEARNING_RATE: float = 0.005
     CONTENT_WEIGHT: float = 0.15
+    SEMANTIC_WEIGHT: float = 0.20
     EARLY_STOPPING_PATIENCE: int = 10
+
+    # Semantic search settings
+    USE_SEMANTIC_SEARCH: bool = True
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_CACHE_PATH: str = str(MODELS_DIR / "embeddings.pkl")
+    EMBEDDING_DIM: int = 384  # Depends on model
 
     # Data settings
     MIN_USER_RATINGS: int = 5

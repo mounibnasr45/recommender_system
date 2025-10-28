@@ -5,6 +5,9 @@ function App() {
   const [userId, setUserId] = useState('');
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [training, setTraining] = useState(false);
   const [error, setError] = useState('');
   const [modelStatus, setModelStatus] = useState(null);
@@ -215,6 +218,46 @@ function App() {
       setError(`Training failed: ${err.message}`);
     } finally {
       setTraining(false);
+    }
+  };
+
+  const handleDescriptionSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    console.log('[Frontend] Starting description search for:', searchQuery);
+    setSearchLoading(true);
+    setSearchResults([]);
+    try {
+      const response = await fetch('/api/search/description', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: searchQuery.trim(),
+          limit: 10
+        }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('[Frontend] Search failed - status:', response.status, 'body:', text);
+        throw new Error('Search failed');
+      }
+
+  const data = await response.json();
+  console.log('[Frontend] Search response:', data);
+  // Accept either 'results' (frontend convention) or 'movies' (backend key)
+  const results = data.results || data.movies || [];
+      if (results.length === 0) {
+        console.warn('[Frontend] No search results returned for query:', searchQuery);
+      }
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Error searching by description:', error);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -432,6 +475,65 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Description-Based Search */}
+        <div className="search-section">
+          <h2>Search by Description</h2>
+          <p>Describe the kind of movie you're looking for (e.g., "space adventure with AI", "romantic comedy with dancing")</p>
+          <div className="search-form">
+            <textarea
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Enter a description of the movie you want to find..."
+              rows="3"
+              className="search-textarea"
+            />
+            <button
+              onClick={handleDescriptionSearch}
+              disabled={!searchQuery.trim() || searchLoading}
+              className="search-btn"
+            >
+              {searchLoading ? 'Searching...' : 'Search Movies'}
+            </button>
+          </div>
+
+          {searchResults.length > 0 && (
+            <div className="search-results">
+              <h3>Search Results</h3>
+              <div className="movie-grid">
+                {searchResults.map((movie, index) => (
+                  <div key={index} className="movie-card">
+                    <h3>{movie.title}</h3>
+                    <p className="movie-genres">
+                      {Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres}
+                    </p>
+                    <p className="movie-similarity">
+                      Similarity: {(movie.similarity_score * 100).toFixed(1)}%
+                    </p>
+                    {movie.description && (
+                      <p className="movie-description">
+                        {movie.description.length > 150
+                          ? `${movie.description.substring(0, 150)}...`
+                          : movie.description}
+                      </p>
+                    )}
+                    {currentUser && (
+                      <button
+                        onClick={() => setRatingMovie({
+                          movie_id: movie.movie_id,
+                          movie_title: movie.title
+                        })}
+                        className="rate-btn"
+                      >
+                        Rate This Movie
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Ratings & History Panel */}
         {showDetails && (

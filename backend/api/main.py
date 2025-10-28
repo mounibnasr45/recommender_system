@@ -9,15 +9,16 @@ from typing import List, Dict, Optional
 import uvicorn
 import pandas as pd
 
-from config import settings
-from services.recommender import RecommenderService
-from services.user_service import UserService
+from backend.config import settings
+from backend.services.recommender import RecommenderService
+from backend.services.user_service import UserService
 
 
 # Pydantic models for API
 class RecommendRequest(BaseModel):
     user_id: int
     n_items: int = 10
+    description_boost: float = 0.0
 
 class TrainRequest(BaseModel):
     force_retrain: bool = False
@@ -72,6 +73,21 @@ class UserStatsResponse(BaseModel):
     total_users: int
     total_ratings: int
     avg_ratings_per_user: float
+
+class DescriptionSearchRequest(BaseModel):
+    query: str
+    n_items: int = 10
+    user_id: Optional[int] = None
+
+class DescriptionSearchResponse(BaseModel):
+    query: str
+    movies: List[Dict]
+    count: int
+
+class SimilarMoviesResponse(BaseModel):
+    movie_id: int
+    similar_movies: List[Dict]
+    count: int
 
 
 # Initialize FastAPI app
@@ -154,6 +170,8 @@ def get_recommendations(user_id: int, n: int = 10):
 @api_router.post("/recommend", response_model=RecommendationResponse)
 def recommend_with_body(request: RecommendRequest):
     """Get movie recommendations using request body"""
+    # Note: description_boost parameter accepted but not yet implemented
+    # Future enhancement: blend collaborative filtering with semantic similarity
     return get_recommendations(request.user_id, request.n_items)
 
 @api_router.get("/history/{user_id}", response_model=UserHistoryResponse)
@@ -209,6 +227,45 @@ def get_dataset_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+@api_router.post("/search/description", response_model=DescriptionSearchResponse)
+def search_by_description(request: DescriptionSearchRequest):
+    """Search movies by text description using semantic similarity"""
+    try:
+        print(f"[API] /search/description request: query='{request.query}' n_items={request.n_items} user_id={request.user_id}")
+        results = recommender_service.search_by_description(
+            query_text=request.query,
+            n=request.n_items,
+            user_id=request.user_id
+        )
+
+        return DescriptionSearchResponse(
+            query=request.query,
+            movies=results,
+            count=len(results)
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+@api_router.get("/movies/{movie_id}/similar", response_model=SimilarMoviesResponse)
+def get_similar_movies(movie_id: int, n: int = 10):
+    """Get movies with similar descriptions to the given movie"""
+    try:
+        similar_movies = recommender_service.find_similar_by_description(movie_id, n)
+
+        return SimilarMoviesResponse(
+            movie_id=movie_id,
+            similar_movies=similar_movies,
+            count=len(similar_movies)
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to find similar movies: {str(e)}")
 
 @api_router.post("/users/register", response_model=UserResponse)
 def register_user(request: UserRegistrationRequest):

@@ -7,8 +7,9 @@ import os
 import pickle
 from typing import List, Dict, Optional
 import pandas as pd
-from models.hybrid_mf import HybridMatrixFactorization, MovieRecommender
-from config import settings
+from backend.models.hybrid_mf import HybridMatrixFactorization, MovieRecommender
+from backend.config import settings
+from .semantic_search import SemanticSearchService
 
 
 class RecommenderService:
@@ -18,6 +19,7 @@ class RecommenderService:
         self.model: Optional[HybridMatrixFactorization] = None
         self.recommender: Optional[MovieRecommender] = None
         self.data: Optional[pd.DataFrame] = None
+        self.semantic_search: Optional[SemanticSearchService] = None
         self.user_service = None  # Will be set later
         self._load_model()
 
@@ -49,6 +51,9 @@ class RecommenderService:
 
                     self.recommender = MovieRecommender(self.model, self.data)
                     print("✓ Data and recommender initialized")
+
+                    # Try to load semantic search service
+                    self._load_semantic_search()
                 else:
                     print("⚠️  Data file not found, recommender not initialized")
             else:
@@ -66,10 +71,36 @@ class RecommenderService:
             self.recommender = None
             
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
-            print("   The saved model may be incompatible. Consider retraining.")
             self.model = None
             self.recommender = None
+
+    def _load_semantic_search(self):
+        """Load semantic search service if embeddings exist"""
+        try:
+            embeddings_path = os.path.join(os.path.dirname(settings.MODEL_PATH), "embeddings.pkl")
+            metadata_path = os.path.join(os.path.dirname(settings.MODEL_PATH), "movie_metadata.pkl")
+
+            if os.path.exists(embeddings_path) and os.path.exists(metadata_path):
+                # Load movie metadata
+                with open(metadata_path, 'rb') as f:
+                    movie_metadata = pickle.load(f)
+
+                # Get descriptions and movie IDs
+                descriptions = movie_metadata['description'].tolist()
+                movie_ids = movie_metadata.index.tolist()
+
+                # Create semantic search service
+                self.semantic_search = SemanticSearchService.from_embeddings_file(
+                    embeddings_path, descriptions
+                )
+                print("✓ Semantic search service loaded")
+            else:
+                print("⚠️  Semantic search embeddings not found")
+                print("   Run generate_data.py to create embeddings")
+
+        except Exception as e:
+            print(f"❌ Error loading semantic search: {e}")
+            self.semantic_search = None
 
     def train_model(self, force_retrain: bool = False) -> Dict:
         """
@@ -120,6 +151,7 @@ class RecommenderService:
                 reg_lambda=settings.REG_LAMBDA,
                 learning_rate=settings.LEARNING_RATE,
                 content_weight=settings.CONTENT_WEIGHT,
+                semantic_weight=settings.SEMANTIC_WEIGHT,
                 early_stopping=True,
                 patience=settings.EARLY_STOPPING_PATIENCE
             )
@@ -208,6 +240,136 @@ class RecommenderService:
             raise ValueError("Model not loaded. Train the model first.")
 
         return self.recommender.get_user_history(user_id)
+
+    def search_by_description(self, query_text: str, n: int = 10, user_id: Optional[int] = None) -> List[Dict]:
+        """
+        Search for movies by semantic description similarity
+
+        Args:
+            query_text: Natural language description of desired movie
+            n: Number of results to return
+            user_id: Optional user ID to personalize results
+
+        Returns:
+            List of movie dictionaries with similarity scores
+        """
+        if self.semantic_search is None:
+            raise ValueError("Semantic search not available. Run generate_data.py to create embeddings.")
+
+        # Logging for debugging
+        print(f"[Search] Received description query: '{query_text}' (n={n}) user_id={user_id}")
+
+        if self.data is None:
+            raise ValueError("Movie data not loaded.")
+
+        # Perform semantic search
+        movie_indices, similarities = self.semantic_search.search(query_text, n)
+        print(f"[Search] Semantic search returned {len(movie_indices)} candidates")
+
+        results = []
+        for idx, similarity in zip(movie_indices, similarities):
+            movie_id = self.semantic_search.get_movie_id(idx)
+            movie_info = self.data[self.data['movieId'] == movie_id]
+
+            if not movie_info.empty:
+                row = movie_info.iloc[0]
+                results.append({
+                    'movieId': int(movie_id),
+                    'title': row['title'],
+                    'genres': row['genres'],
+                    'description': row.get('description', ''),
+                    'similarity_score': round(float(similarity), 3),
+                    'avg_rating': round(float(row.get('rating', 0)), 2)
+                })
+
+        # Optionally rank by user preferences if user_id provided
+        if user_id and self.recommender:
+            print(f"[Search] Re-ranking {len(results)} results for user {user_id}")
+            results = self._rank_by_user_preferences(results, user_id)
+
+        print(f"[Search] Returning {len(results)} results")
+
+        return results
+
+    def find_similar_by_description(self, movie_id: int, n: int = 10) -> List[Dict]:
+        """
+        Find movies similar to a given movie based on description
+
+        Args:
+            movie_id: Movie ID to find similar movies for
+            n: Number of similar movies to return
+
+        Returns:
+            List of similar movie dictionaries
+        """
+        if self.semantic_search is None:
+            raise ValueError("Semantic search not available. Run generate_data.py to create embeddings.")
+
+        if self.data is None:
+            raise ValueError("Movie data not loaded.")
+
+        # Find similar movies
+        movie_indices, similarities = self.semantic_search.find_similar_movies(movie_id, n)
+
+        results = []
+        for idx, similarity in zip(movie_indices, similarities):
+            similar_movie_id = self.semantic_search.get_movie_id(idx)
+            movie_info = self.data[self.data['movieId'] == similar_movie_id]
+
+            if not movie_info.empty:
+                row = movie_info.iloc[0]
+                results.append({
+                    'movieId': int(similar_movie_id),
+                    'title': row['title'],
+                    'genres': row['genres'],
+                    'description': row.get('description', ''),
+                    'similarity_score': round(float(similarity), 3),
+                    'avg_rating': round(float(row.get('rating', 0)), 2)
+                })
+
+        return results
+
+    def _rank_by_user_preferences(self, movies: List[Dict], user_id: int) -> List[Dict]:
+        """
+        Re-rank movies based on user preferences
+
+        Args:
+            movies: List of movie dictionaries
+            user_id: User ID for personalization
+
+        Returns:
+            Re-ranked list of movies
+        """
+        if not movies or user_id not in self.data['userId'].values:
+            return movies
+
+        # Get user's genre preferences
+        user_ratings = self.data[self.data['userId'] == user_id]
+        if user_ratings.empty:
+            return movies
+
+        # Calculate genre preferences
+        genre_scores = {}
+        for _, rating in user_ratings.iterrows():
+            genres = rating['genres'].split('|')
+            score = rating['rating'] - self.model.global_mean if self.model else rating['rating'] - 3.5
+            for genre in genres:
+                genre_scores[genre] = genre_scores.get(genre, 0) + score
+
+        # Re-rank movies by combining similarity and genre preference
+        for movie in movies:
+            genre_boost = 0
+            if movie['genres']:
+                movie_genres = movie['genres'].split('|')
+                genre_boost = sum(genre_scores.get(genre, 0) for genre in movie_genres) / len(movie_genres)
+
+            # Combine similarity with genre preference (weighted)
+            movie['combined_score'] = movie['similarity_score'] + 0.1 * genre_boost
+
+        # Sort by combined score
+        movies.sort(key=lambda x: x['combined_score'], reverse=True)
+
+        return movies
 
     def get_model_info(self) -> Dict:
         """Get information about the loaded model"""

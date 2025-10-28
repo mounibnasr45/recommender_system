@@ -34,6 +34,33 @@ def generate_processed_data():
             min_movie_ratings=settings.MIN_MOVIE_RATINGS
         )
 
+        # Extract movie metadata for semantic search
+        movie_metadata = data[['movieId', 'title', 'genres', 'description']].drop_duplicates()
+        movie_metadata = movie_metadata.set_index('movieId')
+
+        # Generate embeddings for semantic search
+        if settings.USE_SEMANTIC_SEARCH:
+            print("\n🔄 Generating description embeddings...")
+            try:
+                from backend.models.hybrid_mf import SemanticEncoder
+
+                encoder = SemanticEncoder(model_name=settings.EMBEDDING_MODEL)
+                embeddings = encoder.encode_descriptions(movie_metadata['description'].tolist())
+
+                # Save embeddings
+                embeddings_path = Path(settings.EMBEDDING_CACHE_PATH)
+                encoder.save_embeddings(str(embeddings_path), movie_metadata.index.tolist())
+
+                print(f"✅ Embeddings saved to {embeddings_path}")
+                print(f"   → {len(embeddings)} embeddings generated")
+                print(f"   → Dimension: {embeddings.shape[1]}")
+
+            except Exception as e:
+                print(f"⚠️  Failed to generate embeddings: {e}")
+                print("   Semantic search will not be available")
+        else:
+            print("\n⏭️  Skipping embedding generation (USE_SEMANTIC_SEARCH=False)")
+
         # Save processed data
         data_dir = Path(settings.MODEL_PATH).parent
         data_dir.mkdir(exist_ok=True)
@@ -42,10 +69,17 @@ def generate_processed_data():
         with open(data_path, 'wb') as f:
             pickle.dump(data, f)
 
+        # Save movie metadata
+        metadata_path = data_dir / "movie_metadata.pkl"
+        with open(metadata_path, 'wb') as f:
+            pickle.dump(movie_metadata, f)
+
         print(f"✅ Processed data saved to {data_path}")
         print(f"   → {len(data):,} ratings")
         print(f"   → {data['user_idx'].nunique():,} users")
         print(f"   → {data['item_idx'].nunique():,} movies")
+        print(f"✅ Movie metadata saved to {metadata_path}")
+        print(f"   → {len(movie_metadata):,} movies with descriptions")
 
         return True
 

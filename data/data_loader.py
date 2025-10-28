@@ -5,6 +5,7 @@ Loads and prepares MovieLens data with guaranteed successful joins
 
 import pandas as pd
 import numpy as np
+import re
 
 
 class MovieLensLoader:
@@ -15,6 +16,40 @@ class MovieLensLoader:
 
     def __init__(self, data_path: str):
         self.data_path = data_path
+
+    def _preprocess_description(self, overview: str, tagline: str, genres: str) -> str:
+        """
+        Preprocess movie description text for semantic search
+
+        Args:
+            overview: Movie overview from TMDb
+            tagline: Movie tagline from TMDb
+            genres: Pipe-separated genres
+
+        Returns:
+            Preprocessed text string
+        """
+        # Combine overview and tagline
+        text_parts = []
+        if pd.notna(overview) and overview.strip():
+            text_parts.append(overview.strip())
+        if pd.notna(tagline) and tagline.strip():
+            text_parts.append(tagline.strip())
+
+        text = " ".join(text_parts)
+
+        # Clean text
+        if text:
+            text = text.lower().strip()
+            # Remove special characters but keep spaces
+            text = re.sub(r'[^\w\s]', ' ', text)
+            # Normalize whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
+        else:
+            # Fallback to genres if no description available
+            text = genres.lower().replace('|', ' ') if genres else ""
+
+        return text
 
     def load_and_enrich(self, min_user_ratings: int = 5,
                        min_movie_ratings: int = 5) -> pd.DataFrame:
@@ -39,10 +74,34 @@ class MovieLensLoader:
         print(f"  → Movies: {ratings_df['movieId'].nunique():,}")
         print(f"  → Rating range: {ratings_df['rating'].min():.1f} - {ratings_df['rating'].max():.1f}")
 
-        # Load movies
-        print("\n[2/3] Loading movies.csv...")
-        movies_df = pd.read_csv(f"{self.data_path}/movies.csv")
-        print(f"✓ Loaded {len(movies_df):,} movies")
+        # Load movies with TMDb enrichment
+        print("\n[2/3] Loading movies_enriched.csv...")
+        try:
+            movies_df = pd.read_csv(f"{self.data_path}/movies_enriched.csv")
+            has_enriched = True
+            print(f"✓ Loaded {len(movies_df):,} enriched movies with TMDb data")
+        except FileNotFoundError:
+            print("⚠️  movies_enriched.csv not found, falling back to movies.csv")
+            movies_df = pd.read_csv(f"{self.data_path}/movies.csv")
+            # Add empty description columns
+            movies_df['overview'] = ''
+            movies_df['tagline'] = ''
+            movies_df['tmdb_rating'] = np.nan
+            movies_df['runtime'] = np.nan
+            has_enriched = False
+            print(f"✓ Loaded {len(movies_df):,} basic movies")
+
+        # Preprocess descriptions for semantic search
+        if has_enriched:
+            print("\n[2.5/3] Preprocessing movie descriptions...")
+            movies_df['description'] = movies_df.apply(
+                lambda row: self._preprocess_description(
+                    row['overview'], row['tagline'], row['genres']
+                ), axis=1
+            )
+            print(f"✓ Processed descriptions for {len(movies_df):,} movies")
+        else:
+            movies_df['description'] = movies_df['genres'].str.lower().str.replace('|', ' ')
 
         # Load tags (optional)
         print("\n[3/3] Loading tags.csv...")
