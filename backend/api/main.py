@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import uvicorn
+import pandas as pd
 
 from config import settings
 from services.recommender import RecommenderService
@@ -268,7 +269,53 @@ def get_user_ratings(user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
 
     ratings = user_service.get_user_ratings(user_id)
-    return {"user_id": user_id, "ratings": ratings, "count": len(ratings)}
+
+    # Try to enrich ratings with movie metadata if recommender data is available
+    enriched = []
+    data = recommender_service.data
+
+    for r in ratings:
+        movie_id = r.get('movie_id')
+        title = None
+        genres = None
+        primary_genre = None
+
+        try:
+            if data is not None:
+                # Attempt several common column names to find the movie row
+                if 'movieId' in data.columns:
+                    row = data[data['movieId'] == movie_id]
+                elif 'movie_id' in data.columns:
+                    row = data[data['movie_id'] == movie_id]
+                else:
+                    row = pd.DataFrame()
+
+                if not row.empty:
+                    # Prefer 'title' then 'movie_title'
+                    if 'title' in row.columns:
+                        title = row.iloc[0]['title']
+                    elif 'movie_title' in row.columns:
+                        title = row.iloc[0]['movie_title']
+
+                    if 'genres' in row.columns:
+                        genres = row.iloc[0]['genres']
+
+                    if 'primary_genre' in row.columns:
+                        primary_genre = row.iloc[0]['primary_genre']
+        except Exception:
+            # Ignore enrichment errors and fall back to raw rating
+            title = None
+
+        enriched.append({
+            'movie_id': movie_id,
+            'title': title,
+            'genres': genres,
+            'primary_genre': primary_genre,
+            'rating': r.get('rating'),
+            'timestamp': r.get('timestamp')
+        })
+
+    return {"user_id": user_id, "ratings": enriched, "count": len(enriched)}
 
 @api_router.get("/users/{user_id}/ratings/{movie_id}")
 def get_user_rating_for_movie(user_id: int, movie_id: int):

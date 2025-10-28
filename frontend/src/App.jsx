@@ -10,6 +10,12 @@ function App() {
   const [modelStatus, setModelStatus] = useState(null);
   const [checkingHealth, setCheckingHealth] = useState(true);
 
+  // UI: show/hide ratings & history after getting recommendations
+  const [showDetails, setShowDetails] = useState(false);
+  const [userRatings, setUserRatings] = useState([]);
+  const [userHistory, setUserHistory] = useState([]);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
   // User authentication state
   const [currentUser, setCurrentUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
@@ -138,10 +144,49 @@ function App() {
       }
       const data = await response.json();
       setRecommendations(data.recommendations || []);
+      // Reset details panel visibility when new recommendations arrive
+      setShowDetails(false);
+      setUserRatings([]);
+      setUserHistory([]);
     } catch (err) {
       setError(`Failed to get recommendations: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDetails = async () => {
+    // Load user's ratings and history when toggling the details panel open
+    const targetUserId = currentUser ? currentUser.user_id : userId;
+    if (!targetUserId) {
+      setError('No user selected to fetch details');
+      return;
+    }
+
+    setLoadingDetails(true);
+    setError('');
+    try {
+      // Ratings endpoint
+      const ratingsResp = await fetch(`/api/users/${targetUserId}/ratings`);
+      if (ratingsResp.ok) {
+        const ratingsData = await ratingsResp.json();
+        setUserRatings(ratingsData.ratings || []);
+      } else {
+        setUserRatings([]);
+      }
+
+      // History endpoint (may require model to be loaded)
+      const historyResp = await fetch(`/api/history/${targetUserId}`);
+      if (historyResp.ok) {
+        const historyData = await historyResp.json();
+        setUserHistory(historyData.history || []);
+      } else {
+        setUserHistory([]);
+      }
+    } catch (err) {
+      setError(`Failed to load details: ${err.message}`);
+    } finally {
+      setLoadingDetails(false);
     }
   };
 
@@ -338,6 +383,19 @@ function App() {
         {recommendations.length > 0 && (
           <div className="recommendations">
             <h2>Recommended Movies</h2>
+            <div className="details-toggle">
+              <button
+                onClick={async () => {
+                  // Toggle and fetch details when opening
+                  if (!showDetails) await fetchDetails();
+                  setShowDetails(!showDetails);
+                }}
+                className="toggle-btn"
+              >
+                {showDetails ? 'Hide my ratings & history' : 'Show my ratings & history'}
+              </button>
+              {loadingDetails && <span className="loading-inline"> Loading details...</span>}
+            </div>
             <p className="recommendation-type">
               {recommendations[0]?.reason?.includes('Popular movie') ?
                 'Showing popular movies (model not available)' :
@@ -371,6 +429,45 @@ function App() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Ratings & History Panel */}
+        {showDetails && (
+          <div className="details-panel">
+            <div className="ratings-panel">
+              <h3>Your Ratings</h3>
+              {userRatings.length === 0 ? (
+                <p>No ratings found.</p>
+              ) : (
+                <ul>
+                  {userRatings.map((r, i) => (
+                    <li key={i}>
+                      <strong>{r.title || r.movie_title || `Movie ID: ${r.movie_id}`}</strong>
+                      {r.genres ? <span> — {Array.isArray(r.genres) ? r.genres.join(', ') : r.genres}</span> : null}
+                      <span> — Rating: {r.rating}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="history-panel">
+              <h3>Your History</h3>
+              {userHistory.length === 0 ? (
+                <p>No history available.</p>
+              ) : (
+                <ul>
+                  {userHistory.map((h, i) => (
+                    <li key={i}>
+                      <strong>{h.title || h.movie_title || 'Unknown Title'}</strong>
+                      {h.genres ? <span> — {Array.isArray(h.genres) ? h.genres.join(', ') : h.genres}</span> : null}
+                      <span> — Rated: {h.rating}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}
