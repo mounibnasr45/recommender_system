@@ -27,6 +27,12 @@
 - **20% Content-Based**: Genre similarity using Jaccard index
 - **Smart Fallback**: Content-based handles cold-start problems
 
+### 🔍 **Semantic Search by Description**
+- **Natural Language Queries**: Search movies by describing what you're looking for (e.g., "mind-bending sci-fi thriller")
+- **Sentence Embeddings**: Uses SentenceTransformer for semantic similarity matching
+- **Fast Retrieval**: Pre-computed embeddings enable instant search results
+- **Integrated UI**: Seamless search experience in the web interface
+
 ### � **User Management System**
 - **New User Registration**: Create accounts with username and email
 - **Secure Authentication**: Password hashing with salt
@@ -54,7 +60,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                        USER INTERFACE                            │
 │                 React Frontend (Port 3000)                       │
-│              [Search Users] → [Get Recommendations]              │
+│        [Search Users] → [Get Recommendations] → [Search by Description] │
 └────────────────────────────┬─────────────────────────────────────┘
                              │ HTTP/REST API
 ┌────────────────────────────▼─────────────────────────────────────┐
@@ -63,15 +69,17 @@
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  API Layer (main.py)                                     │   │
 │  │  • GET  /api/recommend/{user_id}                         │   │
+│  │  • POST /api/search/description                          │   │
 │  │  • POST /api/train                                       │   │
 │  │  • GET  /api/health                                      │   │
 │  └────────────────────────┬─────────────────────────────────┘   │
 │                           │                                      │
 │  ┌────────────────────────▼─────────────────────────────────┐   │
-│  │  Service Layer (recommender.py)                          │   │
+│  │  Service Layer (recommender.py, semantic_search.py)      │   │
 │  │  • Business logic                                        │   │
 │  │  • Model loading/training                                │   │
 │  │  • Cold-start handling                                   │   │
+│  │  • Semantic search with embeddings                       │   │
 │  └────────────────────────┬─────────────────────────────────┘   │
 └───────────────────────────┼──────────────────────────────────────┘
                             │
@@ -92,6 +100,13 @@
 │  │                                                          │   │
 │  │  Final Prediction = 0.8×CF + 0.2×CB                     │   │
 │  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Semantic Search (SentenceTransformer)                   │   │
+│  │  • Pre-computed embeddings (embeddings.pkl)             │   │
+│  │  • Cosine similarity matching                            │   │
+│  │  • Natural language queries                              │   │
+│  └──────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
                             │
 ┌───────────────────────────▼──────────────────────────────────────┐
@@ -108,6 +123,12 @@
 │  │  Dataset Setup (dataset_setup.py)                       │   │
 │  │  • Auto-downloads MovieLens                             │   │
 │  │  • Extracts & organizes files                           │   │
+│  └────────────────────────┬─────────────────────────────────┘   │
+│                           │                                      │
+│  ┌────────────────────────▼─────────────────────────────────┐   │
+│  │  Embedding Generation (generate_data.py)                │   │
+│  │  • Creates sentence embeddings                          │   │
+│  │  • Saves embeddings.pkl and movie_metadata.pkl          │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
                             │
@@ -525,6 +546,7 @@ Run: docker-compose up --build
 
 **What This Does:**
 ✅ Automatically downloads MovieLens dataset  
+✅ Generates semantic embeddings for search  
 ✅ Trains the recommendation model  
 ✅ Starts backend API server  
 ✅ Starts frontend web interface  
@@ -539,12 +561,13 @@ Run: docker-compose up --build
 Install all required Python packages
 ```
 
-**Step 2:** Train the Model (First Time Only)
+**Step 2:** Train the Model and Generate Embeddings (First Time Only)
 ```
 Run training script
 Download dataset automatically
 Train model (~2-5 minutes)
-Save trained model to disk
+Generate semantic embeddings (~2-3 minutes)
+Save trained model and embeddings to disk
 ```
 
 **Step 3:** Start API Server
@@ -557,6 +580,7 @@ API documentation at /docs
 **Access Points:**
 - **Health Check**: localhost:8000/api/health
 - **Get Recommendations**: localhost:8000/api/recommend/USER_ID
+- **Search by Description**: localhost:8000/api/search/description (POST)
 - **Interactive Docs**: localhost:8000/docs
 
 ---
@@ -954,6 +978,99 @@ Status: 200 OK
     "min": 0.5,
     "max": 5.0
   }
+}
+```
+
+---
+
+#### **Search by Description Endpoint**
+
+**Request:** POST /api/search/description
+
+**Body:**
+```
+{
+  "query": "mind-bending sci-fi thriller",
+  "top_k": 10
+}
+```
+
+**Response:**
+```
+Status: 200 OK
+{
+  "query": "mind-bending sci-fi thriller",
+  "results": [
+    {
+      "movieId": 79132,
+      "title": "Inception (2010)",
+      "genres": "Action|Sci-Fi|Thriller",
+      "similarity": 0.92,
+      "description": "A thief who steals corporate secrets through use of dream-sharing technology is given the inverse task of planting an idea into the mind of a CEO."
+    },
+    ... (up to top_k results)
+  ]
+}
+```
+
+---
+
+### **Scenario 6: Search Movies by Description**
+
+**Goal:** Find movies that match a natural language description
+
+**Process:**
+1. User enters a description like "mind-bending sci-fi thriller with time travel"
+2. System encodes the query using SentenceTransformer
+3. Computes cosine similarity with all movie embeddings
+4. Returns top matching movies with similarity scores
+
+**Sample Output:**
+```
+Search Results for "mind-bending sci-fi thriller":
+
+1. Inception (2010)
+   Similarity: 0.92
+   Genres: Action, Sci-Fi, Thriller
+   Description: A thief who steals corporate secrets...
+
+2. The Matrix (1999)
+   Similarity: 0.89
+   Genres: Action, Sci-Fi
+   Description: A computer hacker learns...
+
+3. Interstellar (2014)
+   Similarity: 0.87
+   Genres: Adventure, Drama, Sci-Fi
+   Description: A team of explorers travel...
+
+... (more results)
+```
+
+**API Usage:**
+```
+POST /api/search/description
+{
+  "query": "mind-bending sci-fi thriller",
+  "top_k": 10
+}
+```
+
+**Response:**
+```
+Status: 200 OK
+{
+  "query": "mind-bending sci-fi thriller",
+  "results": [
+    {
+      "movieId": 79132,
+      "title": "Inception (2010)",
+      "genres": "Action|Sci-Fi|Thriller",
+      "similarity": 0.92,
+      "description": "A thief who steals corporate secrets..."
+    },
+    ... (9 more)
+  ]
 }
 ```
 
