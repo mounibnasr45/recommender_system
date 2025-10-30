@@ -1,6 +1,11 @@
 [build]
   command = "cd frontend && npm install && npm run build"
-  publish = "frontend/dist"  # or "frontend/build" if using React
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "18"
+  # Ensure devDependencies (like vite) are installed during the build
+  NPM_FLAGS = "--include=dev"
 
 [[redirects]]
   from = "/*"
