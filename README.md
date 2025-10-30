@@ -1,161 +1,109 @@
-# 🎬 MovieLens Hybrid Recommender System
-> **A production-ready hybrid recommendation system combining Collaborative Filtering (80%) and Content-Based Filtering (20%) to deliver personalized movie recommendations with 0.86 RMSE accuracy.**
+# 🎬 MovieLens Hybrid Recommender (Concise)
 
-**Live Example:** Given a user who loved *Star Wars* (5⭐) and *The Matrix* (4⭐), the system predicts they'll rate *Inception* **4.94 stars** ⭐⭐⭐⭐⭐
+This repository implements a hybrid movie recommendation system (collaborative + content-based) with an added semantic search feature that finds movies from natural-language descriptions.
 
----
-
-## 📋 Table of Contents
-
-- [✨ Key Features](#-key-features)
-- [🏗️ System Architecture](#️-system-architecture)
-- [🧠 The Recommendation Model](#-the-recommendation-model)
-- [📊 Model Performance](#-model-performance)
-- [🚀 Quick Start](#-quick-start)
-- [💻 Usage Examples](#-usage-examples)
-- [🔧 Customization](#-customization)
-- [📁 Project Structure](#-project-structure)
-- [🐛 Troubleshooting](#-troubleshooting)
-- [🤝 Contributing](#-contributing)
+This README is intentionally concise — it covers the essentials to run the project and use the semantic search endpoint.
 
 ---
 
-## ✨ Key Features
+## Quick Overview
+- Hybrid recommender: matrix factorization (collaborative) combined with genre-based (content) signals.
+- Semantic search: SentenceTransformer embeddings + cosine similarity; pre-computed embeddings are used for fast queries.
+- Backend: FastAPI (port 8000). Frontend: React + Vite (port 3000).
 
-### 🎯 **Intelligent Hybrid Model**
-- **80% Collaborative Filtering**: Matrix Factorization with 15 latent factors
-- **20% Content-Based**: Genre similarity using Jaccard index
-- **Smart Fallback**: Content-based handles cold-start problems
+## Quick Start
 
-### 🔍 **Semantic Search by Description**
-- **Natural Language Queries**: Search movies by describing what you're looking for (e.g., "mind-bending sci-fi thriller")
-- **Sentence Embeddings**: Uses SentenceTransformer for semantic similarity matching
-- **Fast Retrieval**: Pre-computed embeddings enable instant search results
-- **Integrated UI**: Seamless search experience in the web interface
+Recommended: Docker (starts both frontend & backend):
 
-### � **User Management System**
-- **New User Registration**: Create accounts with username and email
-- **Secure Authentication**: Password hashing with salt
-- **Personalized Ratings**: Rate movies and build your recommendation profile
-- **Dynamic Recommendations**: System learns from your ratings over time
+1. Build & run:
 
-### �📈 **Proven Performance**
-- **Test RMSE: 0.8598** (< 1 star error on 0.5-5.0 scale)
-- **Excellent Generalization**: Val-Test difference of only 0.0013
-- **Fast Training**: ~2-5 minutes on 90K ratings
-- **68,160 Parameters**: Efficiently captures user preferences
-
-### 🛠️ **Production-Ready**
-- **Auto-download**: One-command dataset setup
-- **Early Stopping**: Prevents overfitting automatically
-- **REST API**: FastAPI backend with full documentation
-- **Web Interface**: Modern React frontend
-- **Docker Support**: Easy containerized deployment
-
----
-
-## 🏗️ System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        USER INTERFACE                            │
-│                 React Frontend (Port 3000)                       │
-│        [Search Users] → [Get Recommendations] → [Search by Description] │
-└────────────────────────────┬─────────────────────────────────────┘
-                             │ HTTP/REST API
-┌────────────────────────────▼─────────────────────────────────────┐
-│                      FASTAPI BACKEND                             │
-│                     (Port 8000)                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  API Layer (main.py)                                     │   │
-│  │  • GET  /api/recommend/{user_id}                         │   │
-│  │  • POST /api/search/description                          │   │
-│  │  • POST /api/train                                       │   │
-│  │  • GET  /api/health                                      │   │
-│  └────────────────────────┬─────────────────────────────────┘   │
-│                           │                                      │
-│  ┌────────────────────────▼─────────────────────────────────┐   │
-│  │  Service Layer (recommender.py, semantic_search.py)      │   │
-│  │  • Business logic                                        │   │
-│  │  • Model loading/training                                │   │
-│  │  • Cold-start handling                                   │   │
-│  │  • Semantic search with embeddings                       │   │
-│  └────────────────────────┬─────────────────────────────────┘   │
-└───────────────────────────┼──────────────────────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────────┐
-│                    ML MODEL LAYER                                │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  HybridMatrixFactorization (hybrid_mf.py)                │   │
-│  │                                                          │   │
-│  │  ┌─────────────────────┐  ┌──────────────────────┐     │   │
-│  │  │ Collaborative (80%) │  │ Content-Based (20%)  │     │   │
-│  │  │                     │  │                      │     │   │
-│  │  │ • User factors P    │  │ • Genre similarity   │     │   │
-│  │  │ • Item factors Q    │  │ • Jaccard index      │     │   │
-│  │  │ • Biases (μ,bu,bi) │  │ • Weighted ratings   │     │   │
-│  │  │ • SGD training      │  │                      │     │   │
-│  │  └─────────────────────┘  └──────────────────────┘     │   │
-│  │                                                          │   │
-│  │  Final Prediction = 0.8×CF + 0.2×CB                     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Semantic Search (SentenceTransformer)                   │   │
-│  │  • Pre-computed embeddings (embeddings.pkl)             │   │
-│  │  • Cosine similarity matching                            │   │
-│  │  • Natural language queries                              │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────────┐
-│                      DATA LAYER                                  │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Data Loader (data_loader.py)                           │   │
-│  │  • Loads ratings, movies, tags                          │   │
-│  │  • Feature engineering (genres, indices)                │   │
-│  │  • Data filtering & validation                          │   │
-│  └────────────────────────┬─────────────────────────────────┘   │
-│                           │                                      │
-│  ┌────────────────────────▼─────────────────────────────────┐   │
-│  │  Dataset Setup (dataset_setup.py)                       │   │
-│  │  • Auto-downloads MovieLens                             │   │
-│  │  • Extracts & organizes files                           │   │
-│  └────────────────────────┬─────────────────────────────────┘   │
-│                           │                                      │
-│  ┌────────────────────────▼─────────────────────────────────┐   │
-│  │  Embedding Generation (generate_data.py)                │   │
-│  │  • Creates sentence embeddings                          │   │
-│  │  • Saves embeddings.pkl and movie_metadata.pkl          │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-                    MovieLens Dataset
-              (100K ratings, 9.7K movies, 610 users)
+```powershell
+docker-compose up --build
 ```
 
----
+2. Open:
+- Frontend: http://localhost:3000
+- Backend docs: http://localhost:8000/docs
 
-## 🧠 The Recommendation Model
+Local (backend only):
 
-### 🎯 **Hybrid Architecture Overview**
+1. Install Python deps:
 
-Our model combines two complementary approaches to achieve superior prediction accuracy:
-
-```
-Final Prediction = 0.8 × Collaborative Filtering + 0.2 × Content-Based
-                   ├─────────────────────────────┘   └──────────────┘
-                   Matrix Factorization              Genre Similarity
+```powershell
+pip install -r requirements.txt
 ```
 
-This weighted combination leverages the strengths of both approaches while compensating for their individual weaknesses.
+2. Run the API (example):
+
+```powershell
+uvicorn backend.api.main:app --reload --port 8000
+```
+
+Note: run `generate_data.py` once if you need to (re)generate sentence embeddings used by semantic search.
 
 ---
 
-### 📐 **1. Collaborative Filtering Component (80% Weight)**
+## Semantic Search (by description)
+
+Endpoint: POST /api/search/description
+
+Request body:
+
+```json
+{ "query": "mind-bending sci-fi thriller", "top_k": 10 }
+```
+
+Example curl (local):
+
+```bash
+curl -s -X POST http://localhost:8000/api/search/description \
+  -H "Content-Type: application/json" \
+  -d '{"query":"mind-bending sci-fi thriller","top_k":5}'
+```
+
+Sample response (trimmed):
+
+```json
+{
+  "query": "mind-bending sci-fi thriller",
+  "top_k": 5,
+  "results": [
+    { "movie_id": 27205, "title": "Inception", "year": 2010, "genres": ["Action","Sci-Fi","Thriller"], "similarity": 0.92 },
+    { "movie_id": 603,   "title": "The Matrix",  "year": 1999, "genres": ["Action","Sci-Fi"],             "similarity": 0.89 }
+  ]
+}
+```
+
+Developer notes:
+- Embeddings are generated by `generate_data.py` and saved (e.g. `embeddings.pkl`, `movie_metadata.pkl`).
+- Re-run `generate_data.py` if you update movie metadata or change the encoder model.
+
+---
+
+## Useful API endpoints (short)
+- GET /api/health — service & model status
+- GET /api/recommend/{user_id}?n=10 — top-n recommendations for a user
+- GET /api/history/{user_id} — user's rating history
+- POST /api/users/{user_id}/ratings — add a user rating
+- POST /api/search/description — semantic search by free-text
+
+See the automatic docs at `/docs` for full request/response models.
+
+---
+
+## Troubleshooting (common)
+- If the frontend fails to start, ensure Node dependencies are installed and dev server is running (`npm install` then `npm run dev` in `frontend/`).
+- If semantic search returns empty results, confirm `embeddings.pkl` and `movie_metadata.pkl` exist and the backend service has access to them.
+- If you change the SentenceTransformer model, regenerate embeddings.
+
+---
+
+## Contributing
+- Bug reports and PRs welcome. Keep changes focused and include tests where applicable.
+
+---
+
+If you want the README expanded again with architecture diagrams, training details or case studies, tell me which section to restore and I will add a concise version.
 
 **Algorithm:** Matrix Factorization with Biases (SVD-inspired approach)
 
@@ -1013,6 +961,45 @@ Status: 200 OK
 }
 ```
 
+Example curl request:
+
+```bash
+curl -s -X POST http://localhost:8000/api/search/description \
+  -H "Content-Type: application/json" \
+  -d '{"query":"mind-bending sci-fi thriller","top_k":5}'
+```
+
+Sample JSON response (200 OK):
+
+```json
+{
+  "query": "mind-bending sci-fi thriller",
+  "top_k": 5,
+  "results": [
+    {
+      "movie_id": 27205,
+      "title": "Inception",
+      "year": 2010,
+      "genres": ["Action","Sci-Fi","Thriller"],
+      "similarity": 0.923,
+      "overview": "A thief who steals corporate secrets through the use of dream-sharing technology..."
+    },
+    {
+      "movie_id": 603,
+      "title": "The Matrix",
+      "year": 1999,
+      "genres": ["Action","Sci-Fi"],
+      "similarity": 0.892,
+      "overview": "A computer hacker learns from mysterious rebels about the true nature of his reality..."
+    }
+    /* additional results */
+  ]
+}
+```
+
+Notes:
+- The backend returns a `results` array containing movie metadata and a `similarity` score in [0,1] (higher is more similar).
+- The frontend UI uses these fields to display title, poster/thumbnail, short overview and a relevance badge.
 ---
 
 ### **Scenario 6: Search Movies by Description**

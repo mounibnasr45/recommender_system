@@ -52,5 +52,29 @@
     "movie_id": 121,
     "rating": 5.0,
     "timestamp": "2025-10-27T14:26:33.063167"
+  },
+  {
+    "user_id": 1000,
+    "movie_id": 93838,
+    "rating": 1.0,
+    "timestamp": "2025-10-29T09:43:01.020169"
+  },
+  {
+    "user_id": 1000,
+    "movie_id": 1201,
+    "rating": 1.0,
+    "timestamp": "2025-10-29T09:43:05.052278"
+  },
+  {
+    "user_id": 1000,
+    "movie_id": 142488,
+    "rating": 5.0,
+    "timestamp": "2025-10-29T09:43:12.798456"
+  },
+  {
+    "user_id": 1000,
+    "movie_id": 27773,
+    "rating": 5.0,
+    "timestamp": "2025-10-29T09:43:15.864050"
   }
 ]

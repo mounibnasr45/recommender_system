@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
@@ -12,6 +12,9 @@ function App() {
   const [error, setError] = useState('');
   const [modelStatus, setModelStatus] = useState(null);
   const [checkingHealth, setCheckingHealth] = useState(true);
+  const [activeTab, setActiveTab] = useState('recommendations');
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const tabsRef = useRef(null);
 
   // UI: show/hide ratings & history after getting recommendations
   const [showDetails, setShowDetails] = useState(false);
@@ -101,6 +104,24 @@ function App() {
     setError('Logged out successfully');
   };
 
+  // Switch tab helper that closes mobile menu
+  const switchTab = async (tab) => {
+    setActiveTab(tab);
+    setMobileOpen(false);
+    // if opening recommendations, fetch details lazily
+    if (tab === 'recommendations' && !recommendations.length) {
+      // nothing automatic — user must request recommendations
+    }
+    // when opening activity tab, load user's ratings & history
+    if (tab === 'activity' && (currentUser || userId)) {
+      try {
+        await fetchDetails();
+      } catch (e) {
+        console.error('Failed to load activity on tab switch', e);
+      }
+    }
+  };
+
   const handleRateMovie = async (movieId, rating) => {
     if (!currentUser) {
       setError('Please login to rate movies');
@@ -151,6 +172,14 @@ function App() {
       setShowDetails(false);
       setUserRatings([]);
       setUserHistory([]);
+      // If we have a logged-in user, also fetch their details so activity shows up
+      if (currentUser) {
+        try {
+          await fetchDetails();
+        } catch (err) {
+          console.warn('Failed to fetch details after recommendations', err);
+        }
+      }
     } catch (err) {
       setError(`Failed to get recommendations: ${err.message}`);
     } finally {
@@ -173,6 +202,7 @@ function App() {
       const ratingsResp = await fetch(`/api/users/${targetUserId}/ratings`);
       if (ratingsResp.ok) {
         const ratingsData = await ratingsResp.json();
+        console.log('[Frontend] fetched user ratings:', ratingsData);
         setUserRatings(ratingsData.ratings || []);
       } else {
         setUserRatings([]);
@@ -182,6 +212,7 @@ function App() {
       const historyResp = await fetch(`/api/history/${targetUserId}`);
       if (historyResp.ok) {
         const historyData = await historyResp.json();
+        console.log('[Frontend] fetched user history:', historyData);
         setUserHistory(historyData.history || []);
       } else {
         setUserHistory([]);
@@ -263,40 +294,53 @@ function App() {
 
   if (checkingHealth) {
     return (
-      <div className="App">
-        <div className="loading">Checking system status...</div>
+      <div className="app-root">
+        <div className="splash">Checking system status...</div>
       </div>
     );
   }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Movie Recommendation System</h1>
-        <p>Get personalized movie recommendations using hybrid matrix factorization</p>
-
-        {/* User Authentication Section */}
-        <div className="auth-section">
-          {currentUser ? (
-            <div className="user-info">
-              <span>Welcome, {currentUser.username}!</span>
-              <button onClick={handleLogout} className="logout-btn">Logout</button>
-            </div>
-          ) : (
-            <button onClick={() => setShowAuth(true)} className="auth-btn">
-              Login / Register
-            </button>
-          )}
-        </div>
-
-        {modelStatus && (
-          <div className={`model-status ${modelStatus.model_loaded ? 'loaded' : 'not-loaded'}`}>
-            Model Status: {modelStatus.model_loaded ? '✓ Loaded' : '⚠️ Not Loaded'}
+    <div className="app-root">
+      <header className="site-header">
+        <div className="header-inner">
+          <div className="brand" onClick={() => switchTab('recommendations')}>
+            <div className="logo">🎬</div>
+            <div className="brand-title"><span className="gradient-text">CineMatch</span></div>
           </div>
-        )}
+
+          <nav className={`main-nav ${mobileOpen ? 'open' : ''}`} ref={tabsRef}>
+            <button className={`tab-btn ${activeTab === 'recommendations' ? 'active' : ''}`} onClick={() => switchTab('recommendations')}>Recommendations</button>
+            <button className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`} onClick={() => switchTab('search')}>Search</button>
+            <button className={`tab-btn ${activeTab === 'activity' ? 'active' : ''}`} onClick={() => switchTab('activity')}>My Activity</button>
+          </nav>
+
+          <div className="header-actions">
+            {modelStatus && (
+              <div className={`status-badge ${modelStatus.model_loaded ? 'ready' : 'loading'}`}>
+                <span className={`dot ${modelStatus.model_loaded ? 'green' : 'yellow'}`}></span>
+                {modelStatus.model_loaded ? 'Ready' : 'Training'}
+              </div>
+            )}
+
+            <div className="user-area">
+              {currentUser ? (
+                <div className="profile">
+                  <div className="avatar">{currentUser.username?.charAt(0).toUpperCase()}</div>
+                  <span className="username">{currentUser.username}</span>
+                  <button onClick={handleLogout} className="icon-btn">Logout</button>
+                </div>
+              ) : (
+                <button onClick={() => setShowAuth(true)} className="primary-btn">Sign In</button>
+              )}
+            </div>
+
+            <button className="hamburger" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle navigation">☰</button>
+          </div>
+        </div>
       </header>
 
-      <main className="App-main">
+      <main className="main-content">
         {/* Authentication Modal */}
         {showAuth && (
           <div className="auth-modal">
@@ -352,7 +396,7 @@ function App() {
           </div>
         )}
 
-        {/* Rating Modal */}
+  {/* Rating Modal */}
         {ratingMovie && (
           <div className="rating-modal">
             <div className="rating-form">
@@ -384,195 +428,130 @@ function App() {
           </div>
         )}
 
-        {!modelStatus?.model_loaded && (
-          <div className="training-section">
-            <div className="training-notice">
-              <h3>Model Not Available</h3>
-              <p>The recommendation model needs to be trained before you can get personalized recommendations.</p>
-              <p>You can still get popular movie suggestions as a fallback.</p>
-              <button
-                onClick={handleTrain}
-                disabled={training}
-                className="train-btn"
-              >
-                {training ? 'Training Model...' : 'Train Model'}
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Training Notice (card shown inside tabs when model not loaded) */}
+        {activeTab === 'recommendations' && (
+          <section className="hero">
+            <div className="hero-inner">
+              <h1 className="hero-title"><span className="gradient-text">Discover Your Next Favorite Movie</span></h1>
+              <p className="hero-sub">AI-powered hybrid recommendations — personalized and explainable.</p>
 
-        <form onSubmit={handleSubmit} className="recommendation-form">
-          {!currentUser && (
-            <div className="form-group">
-              <label htmlFor="userId">Enter User ID (1-943) or Login for personalized experience:</label>
-              <input
-                type="number"
-                id="userId"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                min="1"
-                max="943"
-                placeholder="e.g., 1"
-              />
-            </div>
-          )}
-          <button type="submit" disabled={loading} className="submit-btn">
-            {loading ? 'Getting Recommendations...' : 'Get Recommendations'}
-          </button>
-        </form>
+              <div className="hero-cta">
+                <form onSubmit={handleSubmit} className="inline-form">
+                  {!currentUser && (
+                    <input
+                      type="number"
+                      id="userId"
+                      value={userId}
+                      onChange={(e) => setUserId(e.target.value)}
+                      min="1"
+                      max="943"
+                      placeholder="User ID (1-943)"
+                      className="input-field"
+                    />
+                  )}
+                  <button type="submit" disabled={loading} className="primary-btn">
+                    {loading ? 'Loading...' : 'Get Recommendations'}
+                  </button>
+                </form>
 
-        {error && <div className="error-message">{error}</div>}
-
-        {recommendations.length > 0 && (
-          <div className="recommendations">
-            <h2>Recommended Movies</h2>
-            <div className="details-toggle">
-              <button
-                onClick={async () => {
-                  // Toggle and fetch details when opening
-                  if (!showDetails) await fetchDetails();
-                  setShowDetails(!showDetails);
-                }}
-                className="toggle-btn"
-              >
-                {showDetails ? 'Hide my ratings & history' : 'Show my ratings & history'}
-              </button>
-              {loadingDetails && <span className="loading-inline"> Loading details...</span>}
-            </div>
-            <p className="recommendation-type">
-              {recommendations[0]?.reason?.includes('Popular movie') ?
-                'Showing popular movies (model not available)' :
-                currentUser ?
-                  'Personalized recommendations based on your ratings!' :
-                  'Personalized recommendations based on your taste'}
-            </p>
-            <div className="movie-grid">
-              {recommendations.map((movie, index) => (
-                <div key={index} className="movie-card">
-                  <h3>{movie.title || movie.movie_title}</h3>
-                  <p className="movie-genres">
-                    {Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres}
-                  </p>
-                  <p className="movie-rating">
-                    Predicted Rating: {(movie.predicted_rating || movie.rating).toFixed(2)}
-                  </p>
-                  {currentUser && (
-                    <button
-                      onClick={() => setRatingMovie({
-                        movie_id: movie.movieId || movie.movie_id,
-                        movie_title: movie.title || movie.movie_title
-                      })}
-                      className="rate-btn"
-                    >
-                      Rate This Movie
+                {(!modelStatus?.model_loaded) && (
+                  <div className="training-banner">
+                    <div className="banner-text">Model not trained yet — Train to enable personalized recommendations</div>
+                    <button onClick={handleTrain} disabled={training} className="secondary-btn">
+                      {training ? 'Training...' : 'Train Model'}
                     </button>
-                  )}
-                  {movie.reason && (
-                    <p className="movie-reason">{movie.reason}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Description-Based Search */}
-        <div className="search-section">
-          <h2>Search by Description</h2>
-          <p>Describe the kind of movie you're looking for (e.g., "space adventure with AI", "romantic comedy with dancing")</p>
-          <div className="search-form">
-            <textarea
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Enter a description of the movie you want to find..."
-              rows="3"
-              className="search-textarea"
-            />
-            <button
-              onClick={handleDescriptionSearch}
-              disabled={!searchQuery.trim() || searchLoading}
-              className="search-btn"
-            >
-              {searchLoading ? 'Searching...' : 'Search Movies'}
-            </button>
-          </div>
-
-          {searchResults.length > 0 && (
-            <div className="search-results">
-              <h3>Search Results</h3>
-              <div className="movie-grid">
-                {searchResults.map((movie, index) => (
-                  <div key={index} className="movie-card">
-                    <h3>{movie.title}</h3>
-                    <p className="movie-genres">
-                      {Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres}
-                    </p>
-                    <p className="movie-similarity">
-                      Similarity: {(movie.similarity_score * 100).toFixed(1)}%
-                    </p>
-                    {movie.description && (
-                      <p className="movie-description">
-                        {movie.description.length > 150
-                          ? `${movie.description.substring(0, 150)}...`
-                          : movie.description}
-                      </p>
-                    )}
-                    {currentUser && (
-                      <button
-                        onClick={() => setRatingMovie({
-                          movie_id: movie.movie_id,
-                          movie_title: movie.title
-                        })}
-                        className="rate-btn"
-                      >
-                        Rate This Movie
-                      </button>
-                    )}
                   </div>
-                ))}
+                )}
               </div>
             </div>
-          )}
-        </div>
+          </section>
+        )}
 
-        {/* Ratings & History Panel */}
-        {showDetails && (
-          <div className="details-panel">
-            <div className="ratings-panel">
-              <h3>Your Ratings</h3>
-              {userRatings.length === 0 ? (
-                <p>No ratings found.</p>
-              ) : (
+        {/* Tabs content */}
+        <section className={`tab-panel ${activeTab === 'recommendations' ? 'visible' : 'hidden'}`}>
+          {error && <div className="toast error">{error}</div>}
+
+          {recommendations.length > 0 ? (
+            <div className="grid-wrap">
+              {recommendations.map((movie, index) => (
+                <article key={index} className="card glass">
+                  <div className={`thumb ${movie.reason?.includes('Popular') ? 'thumb-pop' : 'thumb-rec'}`}>
+                    <div className="thumb-icon">🎞️</div>
+                  </div>
+                  <div className="card-body">
+                    <h3 className="card-title">{movie.title || movie.movie_title}</h3>
+                    <div className="card-meta">{Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres}</div>
+                    <div className="card-rating">★ {(movie.predicted_rating || movie.rating).toFixed(1)}</div>
+                    <div className="card-actions">
+                      {currentUser && (
+                        <button onClick={() => setRatingMovie({ movie_id: movie.movieId || movie.movie_id, movie_title: movie.title || movie.movie_title })} className="ghost-btn">Rate Movie</button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-emoji">🍿</div>
+              <div className="empty-text">No recommendations yet — try getting recommendations or train the model.</div>
+            </div>
+          )}
+        </section>
+
+        <section className={`tab-panel ${activeTab === 'search' ? 'visible' : 'hidden'}`}>
+          <div className="search-card glass">
+            <textarea value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="e.g., 'mind-bending sci-fi thriller with time travel'" className="input-field large" />
+            <div className="search-actions">
+              <button onClick={handleDescriptionSearch} disabled={!searchQuery.trim() || searchLoading} className="search-primary">
+                {searchLoading ? 'Searching...' : 'Search Movies'}
+              </button>
+            </div>
+          </div>
+
+          {searchLoading && <div className="skeleton-grid" />}
+
+          {searchResults.length > 0 ? (
+            <div className="grid-wrap">
+              {searchResults.map((movie, i) => (
+                <article key={i} className="card glass search-result">
+                  <div className="thumb thumb-search"><div className="thumb-icon">🎞️</div></div>
+                  <div className="card-body">
+                    <h3 className="card-title">{movie.title || movie.movie_title}</h3>
+                    <div className="card-meta">{Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres}</div>
+                    <div className="card-extra">Similarity: {(movie.similarity || movie.similarity_score || 0).toFixed(2)}</div>
+                    <div className="card-actions">
+                      {currentUser && <button onClick={() => setRatingMovie({ movie_id: movie.movie_id || movie.movieId, movie_title: movie.title || movie.movie_title })} className="ghost-btn">Rate Movie</button>}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state small">Describe a movie above to start searching.</div>
+          )}
+        </section>
+
+        <section className={`tab-panel ${activeTab === 'activity' ? 'visible' : 'hidden'}`}>
+          <div className="activity-grid">
+            <div className="panel glass">
+              <h4>My Ratings</h4>
+              {userRatings.length === 0 ? <div className="empty-small">No ratings yet</div> : (
                 <ul>
-                  {userRatings.map((r, i) => (
-                    <li key={i}>
-                      <strong>{r.title || r.movie_title || `Movie ID: ${r.movie_id}`}</strong>
-                      {r.genres ? <span> — {Array.isArray(r.genres) ? r.genres.join(', ') : r.genres}</span> : null}
-                      <span> — Rating: {r.rating}</span>
-                    </li>
-                  ))}
+                  {userRatings.map((r, idx) => <li key={idx}><strong>{r.title || r.movie_title}</strong> — {r.rating}</li>)}
                 </ul>
               )}
             </div>
-
-            <div className="history-panel">
-              <h3>Your History</h3>
-              {userHistory.length === 0 ? (
-                <p>No history available.</p>
-              ) : (
+            <div className="panel glass">
+              <h4>History</h4>
+              {userHistory.length === 0 ? <div className="empty-small">No history</div> : (
                 <ul>
-                  {userHistory.map((h, i) => (
-                    <li key={i}>
-                      <strong>{h.title || h.movie_title || 'Unknown Title'}</strong>
-                      {h.genres ? <span> — {Array.isArray(h.genres) ? h.genres.join(', ') : h.genres}</span> : null}
-                      <span> — Rated: {h.rating}</span>
-                    </li>
-                  ))}
+                  {userHistory.map((h, idx) => <li key={idx}><strong>{h.title || h.movie_title}</strong> — {h.rating}</li>)}
                 </ul>
               )}
             </div>
           </div>
-        )}
+        </section>
       </main>
     </div>
   );

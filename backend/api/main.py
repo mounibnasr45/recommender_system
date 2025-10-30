@@ -153,7 +153,7 @@ def train_model(request: TrainRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"Training failed: {str(e)}")
 
 @api_router.get("/recommend/{user_id}", response_model=RecommendationResponse)
-def get_recommendations(user_id: int, n: int = 10):
+def get_recommendations(user_id: int, n: int = 20):
     """Get movie recommendations for a user"""
     try:
         recommendations = recommender_service.get_recommendations(user_id, n)
