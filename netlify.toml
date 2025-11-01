@@ -1,0 +1,29 @@
+# Netlify configuration for Movie Recommender Frontend
+
+[build]
+  # Directory with the frontend source code
+  base = "frontend/"
+  
+  # Build command to run
+  command = "npm install && npm run build"
+  
+  # Directory with the build output (Vite default)
+  publish = "dist"
+
+# Environment variables (you'll need to set these in Netlify dashboard)
+# Go to Site settings > Environment variables and add:
+# VITE_API_URL = https://your-backend-url.com
+
+# Redirect rules for SPA (Single Page Application)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = false
+  
+# Note: Since your backend is FastAPI, you need to deploy it separately
+# Recommended backend hosting options:
+# - Render.com (free tier)
+# - Railway.app (free tier)
+# - Heroku
+# - AWS/Azure/GCP

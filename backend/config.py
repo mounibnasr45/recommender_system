@@ -51,8 +51,17 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     API_RELOAD: bool = True
 
-    # CORS settings
-    CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8000"]
+    # CORS settings - can be overridden via environment variable
+    # Set CORS_ORIGINS in .env as comma-separated list:
+    # CORS_ORIGINS=http://localhost:5173,http://localhost:3000,https://your-app.netlify.app
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:8000"
+
+    @property
+    def cors_origins_list(self) -> list:
+        """Convert CORS_ORIGINS string to list"""
+        if isinstance(self.CORS_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return self.CORS_ORIGINS
 
     class Config:
         env_file = ".env"

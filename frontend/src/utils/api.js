@@ -1,6 +1,9 @@
 // API utility functions for the movie recommender frontend
 
-const API_BASE_URL = '/api';
+// Use environment variable for API URL in production, fallback to /api for development
+const API_BASE_URL = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api` 
+  : '/api';
 
 /**
  * Get movie recommendations for a specific user

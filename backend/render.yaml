@@ -1,0 +1,21 @@
+# Backend Deployment Configuration for Render.com
+
+# This file tells Render.com how to build and run your FastAPI backend
+
+# Build Command (executed during deployment)
+build:
+  - pip install -r requirements.txt
+
+# Start Command (how to run your app)
+start: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+
+# Health Check Endpoint
+health_check:
+  path: /api/health
+  
+# Environment
+python_version: 3.11
+
+# Note: You need to set these environment variables in Render dashboard:
+# - API_HOST=0.0.0.0
+# - API_PORT=$PORT (automatically provided by Render)
